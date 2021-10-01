@@ -1,0 +1,1454 @@
+---
+title: "codeV2"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+knitr::opts_chunk$set(out.width="400px", dpi=120)
+```
+
+
+nouveau code après récupération des résulats (apres avoir enlevé les individus 34 et 47)
+```{r setup, include=FALSE}
+devtools::install_github("chavent/PCAmixdata")
+devtools::install_github("robingenuer/CoVVSURF")
+```
+
+```{r}
+library(MASS)
+library(class)
+library(glmnet)
+library(randomForest)
+library(BiocManager)
+library(mixOmics)
+library(plyr)
+library(ggplot2)
+library(VSURF)
+library(gbm)
+library(FactoMineR)
+library('factoextra')
+library(readxl)
+library(ClustOfVar)
+library(ggpubr)
+library(gridExtra)
+library(grid)
+library(knitr)
+library(devtools)
+library(CoVVSURF)
+library(dendextend)
+library(tidyverse)
+```
+
+# Base de données 
+
+Dans cette base, les 27 premières lignes sont des patients contrôles et les 20 patients suivants sont pathologiques. 
+
+```{r}
+data_davd <- read.csv("/Volumes/mariette.dupuy/GitHub/IHU-LIRYC/DAVD_nom_new.csv" , sep=";",header = TRUE)
+#data_davd <- read.csv("DAVD_nom.csv" , sep=";",header = TRUE)
+```
+
+```{r}
+data_davd <- data_davd[-c(34,47),]
+rownames(data_davd) <- NULL
+```
+
+
+```{r}
+Name_desc <- read_excel("/Volumes/mariette.dupuy/GitHub/IHU-LIRYC/Name_desc.xlsx")
+#Name_desc <- read_excel("Name_desc.xlsx")
+```
+
+```{r}
+y_davd <- rep(NA, nrow(data_davd))
+
+for (i in 1:nrow(data_davd)){
+    if (i < 28) {
+        y_davd[i] <- 0
+    }
+    else {
+        y_davd[i] <- 1
+    }
+}
+```
+
+```{r}
+for(i in 1:1680){
+  colnames(data_davd)[i] <- paste(Name_desc[1,i],Name_desc[2,i],Name_desc[3,i],Name_desc[4,i],sep = "_")
+}
+```
+
+```{r}
+side <- as.data.frame(setNames(replicate(1680,numeric(0), simplify = F),colnames(data_davd) ))
+side [1,] <- Name_desc[5,]
+```
+
+
+```{r}
+#base pour l'ACP
+data <- data.frame(y_davd,data_davd)
+```
+
+
+## ACP normée 
+
+### Etude des écarts-types 
+
+```{r}
+et <- sort(apply(data_davd,2,sd), decreasing = TRUE)
+```
+
+
+```{r}
+barplot(et[1:600],xaxt="n",xlab="ordre des variables", ylab="écarts-types", main="Diagramme en barres des écarts-types des données d'origine", xlim = c(1,1680))
+```
+
+
+### ACP 
+
+
+```{r}
+#acp normée 
+acp_norme <- PCA(data, scale.unit=TRUE, quali.sup =1, graph=F)
+```
+
+```{r}
+fviz_eig(acp_norme,choice="eigenvalue",addlabels = TRUE, main = "Histogramme des éboulis avec valeurs propres")+ labs(title="Histogramme des éboulis des valeurs propres")+theme(plot.title =element_text(hjust = 0.5),plot.caption =element_text(hjust = 0.5))
+```
+
+```{r}
+#cercle des corrélations axes 1 et 2
+#select.var = list(cos2=0.5),
+fviz_pca_var(acp_norme,axes = c(1,2), col.var="contrib",  label="none") + labs(title="Cercle des corrélations sur les données d'origine")+theme(plot.title =element_text(hjust = 0.5),plot.caption =element_text(hjust = 0.5))
+```
+
+Calcul de la qualité de la représentation des variables sur le plan : additionner leur valeur de cos2 sur l'axe 1 et l'axe 2. 
+
+```{r}
+sort(acp_norme$var$cos2[,1]+acp_norme$var$cos2[,2],decreasing = TRUE)[1:30]
+```
+
+```{r}
+#plan factoriel axes 1 et 2
+fviz_pca_ind(acp_norme,axes = c(1,2), habillage = 1, mean.point = FALSE)+ labs(title="Graphique des individus sur les données d'origine")+theme(plot.title =element_text(hjust = 0.5),plot.caption =element_text(hjust = 0.5))
+```
+
+Second plan factoriel. 
+
+```{r}
+#cercle des corrélations axes 3 et 4
+#select.var = list(cos2=0.5),
+fviz_pca_var(acp_norme,axes = c(3,4), col.var="contrib",  label="none") + labs(title="Cercle des corrélations sur les données d'origine")+theme(plot.title =element_text(hjust = 0.5),plot.caption =element_text(hjust = 0.5))
+```
+
+Calcul de la qualité de la représentation des variables sur le plan : additionner leur valeur de cos2 sur l'axe 3 et l'axe 4. 
+
+```{r}
+sort(acp_norme$var$cos2[,3]+acp_norme$var$cos2[,4],decreasing = TRUE)[1:30]
+```
+
+```{r}
+#plan factoriel axes 1 et 2
+fviz_pca_ind(acp_norme,axes = c(3,4), habillage = 1, mean.point = FALSE)+ labs(title="Graphique des individus sur les données d'origine")+theme(plot.title =element_text(hjust = 0.5),plot.caption =element_text(hjust = 0.5))
+```
+
+# Réduire la dimension des données 
+
+## Clustering de variables 
+
+### Résultats 
+
+```{r}
+load("tree_donnees_entieres.RData")
+```
+
+```{r}
+#stab <- stability(tree, B=20)
+#plot(stab,main="stability of the partitions")
+```
+
+```{r}
+plot(tree_donnees_entieres, labels=FALSE)
+```
+
+```{r}
+data_pisteno1 <- data_davd
+```
+
+```{r}
+for ( i in 1:1680){
+  if(str_detect(colnames(data_pisteno1)[i], "Fragmentation") || str_detect(colnames(data_pisteno1)[i], "Maxima") || str_detect(colnames(data_pisteno1)[i], "Energie") || str_detect(colnames(data_pisteno1)[i], "RMS")){
+    data_pisteno1[44,i]<-1 
+  }
+  else if (str_detect(colnames(data_pisteno1)[i], "VOLTAGE")  || str_detect(colnames(data_pisteno1)[i], "RAZ")){
+    data_pisteno1[44,i]<-2
+  }
+  else if (str_detect(colnames(data_pisteno1)[i], "Durée") || str_detect(colnames(data_pisteno1)[i], "Kurtosis") || str_detect(colnames(data_pisteno1)[i], "skewness")){
+    data_pisteno1[44,i]<-3
+  }
+}
+```
+
+```{r}
+colortouse <- as.numeric(data_pisteno1[44,])
+```
+
+
+```{r}
+dend <- as.dendrogram(tree_donnees_entieres)
+colortouse <- colortouse[order.dendrogram(dend)]
+```
+
+```{r}
+labels_colors(dend) <- colortouse
+# Now each state has a color
+labels_colors(dend) 
+```
+
+```{r}
+dend %>% plot() 
+dend %>% rect.dendrogram(k=3, border = 8, lty = 5, lwd = 2)
+```
+
+
+# Prédire la pathologie DAVD 
+
+```{r}
+#Construction de la base
+gram <- function(Xtrain, Ytrain,nb) {
+  
+  M <- ncol(Xtrain)
+  N <- nrow(Xtrain)
+  
+  #index est le vecteur contenant le classement des regresseurs du meilleur au moins bon
+  index <- seq(1,M)
+  A <- diag(M)
+  W <- matrix(0,N,M)
+  G <- matrix(0,M,1)
+  
+  #normalisation des variables d'entrée et de sortie 
+  for (i in 1:1680){
+      Xtrain[,i] = (Xtrain[,i] - mean(Xtrain[,i]))/norm(Xtrain[,i],"2")
+  }
+  
+  Ytrain = (Ytrain - mean(Ytrain))/norm(Ytrain,"2")
+
+  for (k in 1:nb){
+    #Calcul des cosinus
+    cosinus2 <- rep(NA,1680)
+    for (i in k:M){
+      cosinus2[i] =(t(Xtrain[,i])%*%Ytrain)^2/(t(Xtrain[,i])%*%Xtrain[,i]%*%t(Ytrain)%*%Ytrain)
+    }
+  
+    #sélection de la meilleure variable et rangement du vecteur à la place k 
+    indmax <- which.max(cosinus2)
+    Xtrain[,c(k,indmax)]=Xtrain[,c(indmax,k)]
+    #Xtrain_2[,c(k,indmax)]=Xtrain_2[,c(indmax,k)]
+    index[c(k,indmax)]=index[c(indmax,k)]
+    W[,k] <- Xtrain[,k]
+    Pk <- matrix(NA,N,M)
+    
+  
+    #orthogonalisation
+    for (j in (k+1):M) {
+      #matrice diagonale suprieure ? 
+      A[k,j] <- t(W[,k])%*%Xtrain[,j]/(t(W[,k])%*%W[,k])
+      Pk[,j] = Xtrain[,j] - A[k,j]%*%W[,k]
+      Pk[,j] = Pk[,j]/norm(Pk[,j],"2")
+  
+    }
+  
+    Xtrain = Pk
+    G[k,1] = t(W[,k])%*%(Ytrain)/(t(W[,k])%*%W[,k])
+    Ytrain = Ytrain - G[k,1] * W[,k]
+  }
+  
+  return(index)
+}
+```
+
+```{r}
+#tree_donnees_entieres <- hclustvar(X.quanti = data_davd)
+```
+
+```{r}
+#save(tree_donnees_entieres, file = "/Volumes/mariette.dupuy/GitHub/IHU-LIRYC/tree_donnees_entieres.RData")
+```
+
+```{r}
+load("/Volumes/mariette.dupuy/GitHub/IHU-LIRYC/tree_donnees_entieres.RData")
+```
+
+```{r}
+#stab <- stability(tree_donnees_entieres, B=20)
+#plot(stab,main="stability of the partitions")
+```
+
+```{r}
+cut_VC <- cutreevar(tree_donnees_entieres,22)
+var_synth <- cut_VC$scores
+save(var_synth,file="var_synth.RData")
+load("var_synth.RData")
+```
+
+
+```{r}
+B <- 20 # nombre de découpages
+n_folds <- 5
+n<- B*n_folds
+
+k_val <- c(1:15)
+
+err_elast <- rep(NA,B) 
+mat <- matrix(NA,nrow(data_davd),B)
+tvp <- rep(NA,B)
+preci <- rep(NA,B)
+choix_var_elast <- matrix(NA,n,1681)
+nb_var_elast <- rep(NA,n)
+
+err_covvsurf <- rep(NA,B)
+mat_rf <- matrix(NA,nrow(data_davd),B)
+tvp_rf <- rep(NA,B)
+preci_rf <- rep(NA,B)
+choix_var_covs <- matrix(NA,n,1681)
+nb_var_covs <- rep(NA,n)
+
+
+
+err_elast_synth <- rep(NA,B) 
+mat_elast_synth <- matrix(NA,nrow(data_davd),B)
+tvp_elast_synth <- rep(NA,B)
+preci_elast_synth <- rep(NA,B)
+choix_var_elast_synth <- matrix(NA,n,23)
+nb_var_elast_synth <- rep(NA,n)
+
+err_covvsurf_synth <- rep(NA,B)
+mat_rf_synth <- matrix(NA,nrow(data_davd),B)
+tvp_rf_synth <- rep(NA,B)
+preci_rf_synth <- rep(NA,B)
+choix_var_covs_synth <- matrix(NA,n,1681)
+nb_var_covs_synth <- rep(NA,n)
+
+
+
+err_elast_gram <- rep(NA,B)
+mat_elast_gram <- matrix(NA,nrow(data_davd),B)
+tvp_elast_gram <- rep(NA,B)
+preci_elast_gram <- rep(NA,B)
+choix_var_elast_gram <- matrix(NA,n,48)
+nb_var_elast_gram <- rep(NA,n)
+
+err_covvsurf_gram <- rep(NA,B)
+mat_rf_gram <- matrix(NA,nrow(data_davd),B)
+tvp_rf_gram <- rep(NA,B)
+preci_rf_gram <- rep(NA,B)
+choix_var_covs_gram <- matrix(NA,n,1681)
+nb_var_covs_gram <- rep(NA,n)
+
+
+err_gram_no <- rep(NA,B)
+mat_gram_no <- matrix(NA,nrow(data_davd),B)
+tvp_gram_no <- rep(NA,B)
+preci_gram_no <- rep(NA,B)
+choix_var_gram_no <- matrix(0,n,1680)
+nb_var_gram_no <- rep(NA,n)
+
+
+
+sain_d <- data_davd[1:27,]
+patho_d <- data_davd[28:nrow(data_davd),]
+
+sain_d_synth <- var_synth[1:27,]
+patho_d_synth <- var_synth[28:nrow(data_davd),]
+
+
+y_sain <- y_davd[1:27]
+y_patho <- y_davd[28:nrow(data_davd)]
+
+
+
+for (b in 1:B)
+{
+
+  #données originales
+  pred_elast_s <- rep(NA, nrow(sain_d))
+  pred_elast_p <- rep(NA, nrow(patho_d))
+
+  pred_rf_s <- rep(NA, nrow(sain_d))
+  pred_rf_p <- rep(NA, nrow(patho_d))
+
+  
+  #données synthétiques
+  pred_elast_s_synth <- rep(NA, nrow(sain_d))
+  pred_elast_p_synth <- rep(NA, nrow(patho_d))
+  
+  pred_rf_s_synth <- rep(NA, nrow(sain_d))
+  pred_rf_p_synth <- rep(NA, nrow(patho_d))
+
+  
+  #données gram schmidt 
+  pred_elast_s_gram <- rep(NA, nrow(sain_d))
+  pred_elast_p_gram <- rep(NA, nrow(patho_d))
+
+  pred_rf_s_gram <- rep(NA, nrow(sain_d))
+  pred_rf_p_gram <- rep(NA, nrow(patho_d))
+
+    
+  sain <- sample(rep(1:n_folds, length.out = 27))
+  patho <- sample(rep(1:n_folds, length.out = 20))
+  
+  # boucle sur les folds
+  for (k in 1:n_folds) {
+    
+  test_i_s <- which(sain == k) 
+  test_i_p <- which(patho == k)
+  
+  #mise en place des ensembles train pour les trois différentes bases de données
+  Xtrain_s <- sain_d[-test_i_s, ]
+  Xtrain_p <- patho_d[-test_i_p, ]
+  Xtrain <- rbind(Xtrain_s,Xtrain_p)
+
+  Xtrain_s_synth <- sain_d_synth[-test_i_s, ]
+  Xtrain_p_synth <- patho_d_synth[-test_i_p, ]
+  Xtrain_synth <- rbind(Xtrain_s_synth,Xtrain_p_synth)
+
+  
+  #mise en place des ensembles test pour les trois différentes bases de données 
+  Xtest_s <- sain_d[test_i_s, ]
+  Xtest_p <- patho_d[test_i_p, ]
+  Xtest <- rbind(Xtest_s,Xtest_p)
+
+  Xtest_s_synth <- sain_d_synth[test_i_s, ]
+  Xtest_p_synth <- patho_d_synth[test_i_p, ]
+  Xtest_synth <- rbind(Xtest_s_synth,Xtest_p_synth)
+
+  
+  
+  
+  #variable réponse 
+  Ytrain_s <- y_sain[-test_i_s]
+  Ytrain_p <- y_patho[-test_i_p]
+  Ytrain <- c(Ytrain_s,Ytrain_p)
+  
+  #données originales
+  # calibration du paramètre alpha 
+  alpha <- seq(0.2,1,0.1)
+  err_alpha <- rep(NA,length(alpha))
+
+  for (alpha_ind in 1:length(alpha)) {
+    cv_alpha <- cv.glmnet(as.matrix(Xtrain), as.factor(Ytrain),family="binomial",alpha=alpha[alpha_ind],standardize=TRUE,type.measure="class")
+    pred_alpha_s <- predict(cv_alpha,as.matrix(Xtest_s),s = "lambda.min", type="class")
+    pred_alpha_p <- predict(cv_alpha,as.matrix(Xtest_p),s = "lambda.min", type="class")
+    err_alpha[alpha_ind] <- sum(c(pred_alpha_s,pred_alpha_p)!=y_davd[c(test_i_s,test_i_p+27)])/length(y_davd[c(test_i_s,test_i_p+27)])
+
+  }
+
+  cv_fit <- cv.glmnet(as.matrix(Xtrain), as.factor(Ytrain),family="binomial",alpha=alpha[which.min(err_alpha)],standardize=TRUE,type.measure="class")
+  pred_elast_s[test_i_s] <- predict(cv_fit,as.matrix(Xtest_s),s = "lambda.min", type="class")
+  pred_elast_p[test_i_p] <- predict(cv_fit,as.matrix(Xtest_p),s = "lambda.min", type="class")
+  coeff_elast <- predict(cv_fit,as.matrix(Xtest),s = "lambda.min", type = "coefficients")
+  choix_var_elast[((b-1)*n_folds)+k,] <- coeff_elast[,1]
+  nb_var_elast[((b-1)*n_folds)+k] <- sum(coeff_elast!=0)
+
+
+
+
+  vsurf_fit <- VSURF(as.matrix(Xtrain), as.factor(Ytrain), parallel = TRUE)
+  var_selected <- vsurf_fit$varselect.pred
+  nb_var_covs[((b-1)*n_folds)+k] <- length(var_selected)
+
+  X_train_selected <- Xtrain[,var_selected]
+
+  X_test_selected_s <- Xtest_s[,var_selected]
+  X_test_selected_p <- Xtest_p[,var_selected]
+
+  if(length(var_selected) == 1){
+    X_train_selected <- as.data.frame(X_train_selected)
+    X_test_selected_s <- as.data.frame(X_test_selected_s)
+    X_test_selected_p <- as.data.frame(X_test_selected_p)
+    colnames(X_train_selected) <- colnames(data_davd)[var_selected]
+    colnames(X_test_selected_s) <- colnames(data_davd)[var_selected]
+    colnames(X_test_selected_p) <- colnames(data_davd)[var_selected]
+  }
+
+
+  rf <- randomForest(as.matrix(X_train_selected), as.factor(Ytrain))
+  a_c <- predict(rf,X_test_selected_s,type = "class")
+  c_c <- predict(rf,X_test_selected_p, type="class")
+  pred_rf_s[test_i_s] <- as.character(a_c)
+  pred_rf_p[test_i_p] <- as.character(c_c)
+
+
+
+  for (s in 1:ncol(data_davd)){
+    for (t in 1:length(var_selected)){
+    if (colnames(data_davd[s]) == colnames(X_train_selected[t])){
+      choix_var_covs[((b-1)*n_folds)+k,s] = 1
+    }
+    else if (choix_var_covs[((b-1)*n_folds)+k,s] != 1 | is.na(choix_var_covs[((b-1)*n_folds)+k,s])){
+        choix_var_covs[((b-1)*n_folds)+k,s] = 0
+      }
+    }
+
+  }
+
+
+
+  # # #données synthétiques
+
+  # calibration du paramètre alpha 
+  err_alpha_synth <- rep(NA,length(alpha))
+
+  for (alpha_ind in 1:length(alpha)) {
+    cv_alpha_synth <- cv.glmnet(as.matrix(Xtrain_synth), as.factor(Ytrain),family="binomial",alpha=alpha[alpha_ind],standardize=TRUE,type.measure="class")
+    pred_alpha_s_synth <- predict(cv_alpha_synth,as.matrix(Xtest_s_synth),s = "lambda.min", type="class")
+    pred_alpha_p_synth <- predict(cv_alpha_synth,as.matrix(Xtest_p_synth),s = "lambda.min", type="class")
+    err_alpha_synth[alpha_ind] <- sum(c(pred_alpha_s_synth,pred_alpha_p_synth)!=y_davd[c(test_i_s,test_i_p+27)])/length(y_davd[c(test_i_s,test_i_p+27)])
+
+  }
+
+  cv_fit_synth <- cv.glmnet(as.matrix(Xtrain_synth), as.factor(Ytrain),family="binomial",alpha=alpha[which.min(err_alpha_synth)],standardize=TRUE,type.measure="class")
+  pred_elast_s_synth[test_i_s] <- predict(cv_fit_synth,as.matrix(Xtest_s_synth),s = "lambda.min", type="class")
+  pred_elast_p_synth[test_i_p] <- predict(cv_fit_synth,as.matrix(Xtest_p_synth),s = "lambda.min", type="class")
+  coeff_elast_synth <- predict(cv_fit_synth,as.matrix(Xtest_synth),s = "lambda.min", type = "coefficients")
+  choix_var_elast_synth[((b-1)*n_folds)+k,] <- coeff_elast_synth[,1]
+  nb_var_elast_synth[((b-1)*n_folds)+k] <- sum(coeff_elast_synth!=0)
+   
+ 
+  vsurf_fit_synth <- VSURF(as.matrix(Xtrain_synth), as.factor(Ytrain), parallel = TRUE)
+  #attention à voir si je prends les variables sélectionnées à cette étape ou mettre un if qui ne le fait que quand le nombre de variables est égal aux deux étapes
+  var_selected_synth <- vsurf_fit_synth$varselect.interp
+  nb_var_covs_synth[((b-1)*n_folds)+k] <- length(var_selected_synth)
+
+  X_train_selected_synth <- Xtrain[,var_selected_synth]
+
+  X_test_selected_s_synth <- Xtest_s[,var_selected_synth]
+  X_test_selected_p_synth <- Xtest_p[,var_selected_synth]
+
+  if(length(var_selected_synth) == 1){
+    X_train_selected_synth <- as.data.frame(X_train_selected_synth)
+    X_test_selected_s_synth <- as.data.frame(X_test_selected_s_synth)
+    X_test_selected_p_synth <- as.data.frame(X_test_selected_p_synth)
+    colnames(X_train_selected_synth) <- colnames(data_davd)[var_selected_synth]
+    colnames(X_test_selected_s_synth) <- colnames(data_davd)[var_selected_synth]
+    colnames(X_test_selected_p_synth) <- colnames(data_davd)[var_selected_synth]
+  }
+
+
+  rf_synth <- randomForest(as.matrix(X_train_selected_synth), as.factor(Ytrain))
+  a_synth <- predict(rf_synth,X_test_selected_s_synth,type = "class")
+  c_synth <- predict(rf_synth,X_test_selected_p_synth, type="class")
+  pred_rf_s_synth[test_i_s] <- as.character(a_synth)
+  pred_rf_p_synth[test_i_p] <- as.character(c_synth)
+
+  for (s in 1:ncol(data_davd)){
+    for (t in 1:length(var_selected_synth)){
+    if (colnames(data_davd[s]) == colnames(X_train_selected_synth[t])){
+      choix_var_covs_synth[((b-1)*n_folds)+k,s] = 1
+    }
+      else if (choix_var_covs_synth[((b-1)*n_folds)+k,s] != 1 | is.na(choix_var_covs_synth[((b-1)*n_folds)+k,s])){
+        choix_var_covs_synth[((b-1)*n_folds)+k,s] = 0
+      }
+    }
+  }
+
+
+
+  # #données gram schmidt
+  Ytrain_g <- t(t(Ytrain))
+  index = gram(Xtrain,Ytrain_g,nrow(data_davd))
+  var_l_1se <- index[1:nrow(data_davd)]
+  c <- colnames(data_davd)[var_l_1se]
+  indices_1se <- which(colnames(data_davd) %in% c)
+
+  Xtrain_gram<- Xtrain[,indices_1se]
+  Xtest_s_gram <- Xtest_s[,indices_1se]
+  Xtest_p_gram <- Xtest_p[,indices_1se]
+  Xtest_gram <- rbind(Xtest_s_gram,Xtest_p_gram)
+  
+  
+  err_alpha_gram <- rep(NA,length(alpha))
+  
+  for (alpha_ind in 1:length(alpha)) {
+    cv_alpha_gram <- cv.glmnet(as.matrix(Xtrain_gram), as.factor(Ytrain),family="binomial",alpha=alpha[alpha_ind],standardize=TRUE,type.measure="class")
+    pred_alpha_s_gram <- predict(cv_alpha_gram,as.matrix(Xtest_s_gram),s = "lambda.min", type="class")
+    pred_alpha_p_gram <- predict(cv_alpha_gram,as.matrix(Xtest_p_gram),s = "lambda.min", type="class")
+    err_alpha_gram[alpha_ind] <- sum(c(pred_alpha_s_gram,pred_alpha_p_gram)!=y_davd[c(test_i_s,test_i_p+27)])/length(y_davd[c(test_i_s,test_i_p+27)])
+    
+  }
+   
+  cv_fit_gram <- cv.glmnet(as.matrix(Xtrain_gram), as.factor(Ytrain),family="binomial",alpha=0.1,standardize=TRUE,type.measure="class")
+  pred_elast_s_gram[test_i_s] <- predict(cv_fit_gram,as.matrix(Xtest_s_gram),s = "lambda.min", type="class")
+  pred_elast_p_gram[test_i_p] <- predict(cv_fit_gram,as.matrix(Xtest_p_gram),s = "lambda.min", type="class")
+  coeff_elast_gram <- predict(cv_fit_gram,as.matrix(Xtest_gram),s = "lambda.min", type = "coefficients")
+  choix_var_elast_gram[((b-1)*n_folds)+k,] <- coeff_elast_gram[,1]
+  nb_var_elast_gram[((b-1)*n_folds)+k] <- sum(coeff_elast_gram!=0)
+
+
+  vsurf_fit_gram <- VSURF(as.matrix(Xtrain_gram), as.factor(Ytrain), parallel = TRUE)
+  var_selected_gram <- vsurf_fit_gram$varselect.pred
+  nb_var_covs_gram[((b-1)*n_folds)+k] <- length(var_selected_gram)
+
+  X_train_selected_gram <- Xtrain[,var_selected_gram]
+
+  X_test_selected_s_gram <- Xtest_s[,var_selected_gram]
+  X_test_selected_p_gram <- Xtest_p[,var_selected_gram]
+
+  if(length(var_selected_gram) == 1){
+    X_train_selected_gram <- as.data.frame(X_train_selected_gram)
+    X_test_selected_s_gram <- as.data.frame(X_test_selected_s_gram)
+    X_test_selected_p_gram <- as.data.frame(X_test_selected_p_gram)
+    colnames(X_train_selected_gram) <- colnames(data_davd)[var_selected_gram]
+    colnames(X_test_selected_s_gram) <- colnames(data_davd)[var_selected_gram]
+    colnames(X_test_selected_p_gram) <- colnames(data_davd)[var_selected_gram]
+  }
+
+
+  rf_gram <- randomForest(as.matrix(X_train_selected_gram), as.factor(Ytrain))
+  a_gram <- predict(rf_gram,X_test_selected_s_gram,type = "class")
+  c_gram <- predict(rf_gram,X_test_selected_p_gram, type="class")
+  pred_rf_s_gram[test_i_s] <- as.character(a_gram)
+  pred_rf_p_gram[test_i_p] <- as.character(c_gram)
+
+  
+  for (s in 1:ncol(data_davd)){
+    for (t in 1:length(var_selected_gram)){
+    if (colnames(data_davd[s]) == colnames(X_train_selected_gram[t])){
+      choix_var_covs_gram[((b-1)*n_folds)+k,s] = 1
+    }
+      else if (choix_var_covs_gram[((b-1)*n_folds)+k,s] != 1 | is.na(choix_var_covs_gram[((b-1)*n_folds)+k,s])){
+        choix_var_covs_gram[((b-1)*n_folds)+k,s] = 0
+      }
+    }
+  }
+  
+  
+}
+
+
+  
+  err_elast[b] <- sum(c(pred_elast_s,pred_elast_p)!=y_davd)/length(y_davd)
+  pred <- c(pred_elast_s,pred_elast_p)
+  mat[,b] <- pred
+  tab <- table(y_davd,pred)
+
+  # # taux de vrais et faux positifs
+  if (length(unique(pred)) == 1 & unique(pred) == 0){
+    tvp[b] <- 0
+    preci[b] <- 0
+  }
+  else if (length(unique(pred)) == 1 & unique(pred) == 1){
+    tvp[b] <- 1
+    preci[b] <- tab[2,2]/(tab[2,2]+tab[1,2])
+  }
+  else if (length(unique(pred)) == 2) {
+    tvp[b] <- tab[2,2]/(tab[2,1]+tab[2,2])
+    preci[b] <- tab[2,2]/(tab[2,2]+tab[1,2])
+
+  }
+
+
+
+  err_covvsurf[b] <- sum(c(pred_rf_s,pred_rf_p)!=y_davd)/length(y_davd)
+  pred_rf <- c(pred_rf_s,pred_rf_p)
+  mat_rf[,b] <- pred_rf
+  tab_rf <- table(y_davd,pred_rf)
+  if (length(unique(pred_rf)) == 1 & unique(pred_rf) == 0){
+    tvp_rf[b] <- 0
+    preci_rf[b] <- 0
+  }
+  else if (length(unique(pred_rf)) == 1 & unique(pred_rf) == 1){
+    tvp_rf[b] <- 1
+    preci_rf[b] <- tab_rf[2,2]/(tab_rf[2,2]+tab_rf[1,2])
+  }
+  else if (length(unique(pred_rf)) == 2) {
+    tvp_rf[b] <- tab_rf[2,2]/(tab_rf[2,1]+tab_rf[2,2])
+    preci_rf[b] <- tab_rf[2,2]/(tab_rf[2,2]+tab_rf[1,2])
+
+  }
+
+  err_elast_synth[b] <- sum(c(pred_elast_s_synth,pred_elast_p_synth)!=y_davd)/length(y_davd)
+  pred_elast_synth <- c(pred_elast_s_synth,pred_elast_p_synth)
+  mat_elast_synth[,b] <- pred_elast_synth
+  tab_elast_synth <- table(y_davd,pred_elast_synth)
+  if (length(unique(pred_elast_synth)) == 1 & unique(pred_elast_synth) == 0){
+    tvp_elast_synth[b] <- 0
+    preci_elast_synth[b] <- 0
+  }
+  else if (length(unique(pred_elast_synth)) == 1 & unique(pred_elast_synth) == 1){
+    tvp_elast_synth[b] <- 1
+    preci_elast_synth[b] <- tab_elast_synth[2,2]/(tab_elast_synth[2,2]+tab_elast_synth[1,2])
+  }
+  else if (length(unique(pred_elast_synth)) == 2) {
+    tvp_elast_synth[b] <- tab_elast_synth[2,2]/(tab_elast_synth[2,1]+tab_elast_synth[2,2])
+    preci_elast_synth[b] <- tab_elast_synth[2,2]/(tab_elast_synth[2,2]+tab_elast_synth[1,2])
+
+  }
+
+
+  err_covvsurf_synth[b] <- sum(c(pred_rf_s_synth,pred_rf_p_synth)!=y_davd)/length(y_davd)
+  pred_rf_synth <- c(pred_rf_s_synth,pred_rf_p_synth)
+  mat_rf_synth[,b] <- pred_rf_synth
+  tab_rf_synth <- table(y_davd,pred_rf_synth)
+  if (length(unique(pred_rf_synth)) == 1 & unique(pred_rf_synth) == 0){
+    tvp_rf_synth[b] <- 0
+    preci_rf_synth[b] <- 0
+  }
+  else if (length(unique(pred_rf_synth)) == 1 & unique(pred_rf_synth) == 1){
+    tvp_rf_synth[b] <- 1
+    preci_rf_synth[b] <- tab_rf_synth[2,2]/(tab_rf_synth[2,2]+tab_rf_synth[1,2])
+  }
+  else if (length(unique(pred_rf_synth)) == 2) {
+    tvp_rf_synth[b] <- tab_rf_synth[2,2]/(tab_rf_synth[2,1]+tab_rf_synth[2,2])
+    preci_rf_synth[b] <- tab_rf_synth[2,2]/(tab_rf_synth[2,2]+tab_rf_synth[1,2])
+
+  }
+
+
+
+
+  err_elast_gram[b] <- sum(c(pred_elast_s_gram,pred_elast_p_gram)!=y_davd)/length(y_davd)
+  pred_elast_gram <- c(pred_elast_s_gram,pred_elast_p_gram)
+  mat_elast_gram[,b] <- pred_elast_gram
+  tab_elast_gram <- table(y_davd,pred_elast_gram)
+  if (length(unique(pred_elast_gram)) == 1 & unique(pred_elast_gram) == 0){
+    tvp_elast_gram[b] <- 0
+    preci_elast_gram[b] <- 0
+  }
+  else if (length(unique(pred_elast_gram)) == 1 & unique(pred_elast_gram) == 1){
+    tvp_elast_gram[b] <- 1
+    preci_elast_gram[b] <- tab_elast_gram[2,2]/(tab_elast_gram[1,2]+tab_elast_gram[2,2])
+  }
+  else if (length(unique(pred_elast_gram)) == 2) {
+    tvp_elast_gram[b] <- tab_elast_gram[2,2]/(tab_elast_gram[2,1]+tab_elast_gram[2,2])
+    preci_elast_gram[b] <- tab_elast_gram[2,2]/(tab_elast_gram[1,2]+tab_elast_gram[2,2])
+
+  }
+
+  err_covvsurf_gram[b] <- sum(c(pred_rf_s_gram,pred_rf_p_gram)!=y_davd)/length(y_davd)
+  pred_rf_gram <- c(pred_rf_s_gram,pred_rf_p_gram)
+  mat_rf_gram[,b] <- pred_rf_gram
+  tab_rf_gram <- table(y_davd,pred_rf_gram)
+  if (length(unique(pred_rf_gram)) == 1 & unique(pred_rf_gram) == 0){
+    tvp_rf_gram[b] <- 0
+    preci_rf_gram[b] <- 0
+  }
+  else if (length(unique(pred_rf_gram)) == 1 & unique(pred_rf_gram) == 1){
+    tvp_rf_gram[b] <- 1
+    preci_rf_gram[b] <- tab_rf_gram[2,2]/(tab_rf_gram[1,2]+tab_rf_gram[2,2])
+  }
+  else if (length(unique(pred_rf_gram)) == 2) {
+    tvp_rf_gram[b] <- tab_rf_gram[2,2]/(tab_rf_gram[2,1]+tab_rf_gram[2,2])
+    preci_rf_gram[b] <- tab_rf_gram[2,2]/(tab_rf_gram[1,2]+tab_rf_gram[2,2])
+
+  }
+
+
+ print(b) 
+}
+```
+
+## Données d'origine 
+
+### resultats combinés
+
+```{r, fig.height=20,fig.width=14}
+boxplot(data.frame(elasticnet = err_elast, VSURF =err_covvsurf),ylab="taux d'erreur")
+```
+
+```{r}
+boxplot(data.frame(elasticnet = nb_var_elast, VSURF = nb_var_covs), ylab="nombre de variables sélectionnées")
+```
+
+
+```{r}
+#comptage des variables utilisées
+vecteur_var_elast <- rep(0,1681)
+
+for (o in 1:(B*n_folds)){
+  for(p in 1:1681){
+    if (choix_var_elast[o,p]!=0){
+      vecteur_var_elast[p] <- vecteur_var_elast[p]+1
+    }
+  }
+}
+
+vecteur_var_elast <- as.data.frame(vecteur_var_elast)
+vecteur_var_elast <- cbind(vecteur_var_elast,c('intercept',colnames(data_davd)))
+```
+
+```{r, fig.width=12}
+tab_elast=vecteur_var_elast[order(-vecteur_var_elast$vecteur_var_elast),]
+colnames(tab_elast) <- c('freq', 'vari')
+```
+
+```{r}
+barplot(tab_elast[order(tab_elast[-1,1],decreasing=TRUE),][-1,1], ylab = "nombre de fois que la variable est sélectionnée", ylim=c(0,100))
+#end_point = 0.5 + nrow(tab_elast[-1,]) + nrow(tab_elast[-1, ]) - 1
+#text(seq(1.5, end_point, by = 2), par("usr")[3]-0.25, 
+#     srt = 60, adj = 1, xpd = TRUE,
+#     labels = tab_elast[order(tab_elast[-1,1],decreasing=TRUE),][-1,2], cex = 0.4)
+```
+
+
+
+
+
+```{r}
+#comptage des variables utilisées
+vecteur_var_covs <- rep(0,1681)
+
+for (o in 1:(B*n_folds)){
+  for(p in 1:1680){
+    if (choix_var_covs[o,p]!=0){
+      vecteur_var_covs[p] <- vecteur_var_covs[p]+1
+    }
+  }
+}
+
+vecteur_var_covs <- as.data.frame(vecteur_var_covs)
+vecteur_var_covs <- cbind(vecteur_var_covs,c('intercept',colnames(data_davd)))
+```
+
+```{r, fig.width=12}
+tab_cov=vecteur_var_covs[order(-vecteur_var_covs$vecteur_var_covs),]
+colnames(tab_cov) <- c('freq', 'vari')
+```
+
+```{r}
+barplot(tab_cov[order(tab_cov[-1,1],decreasing=TRUE),][-1,1], ylab = "nombre de fois que la variable est sélectionnée", space =1,ylim=c(0,100))
+```
+
+
+
+
+
+```{r}
+barplot(tab_elast[order(tab_elast[2:10,1],decreasing=TRUE),][2:10,1],  ylab = "nombre de fois que la variable est sélectionnée", space=1)
+end_point = 0.5 + nrow(tab_elast[2:10,]) + nrow(tab_elast[2:10, ]) - 1
+text(seq(1.5, end_point, by = 2), par("usr")[3]-0.25, 
+     srt = 60, adj = 1, xpd = TRUE,
+     labels = tab_elast[order(tab_elast[2:10,1],decreasing=TRUE),][2:10,2], cex = 0.6)
+```
+
+
+```{r}
+barplot(tab_cov[order(tab_cov[2:10,1],decreasing=TRUE),][2:10,1],  ylab = "nombre de fois que la variable est sélectionnée", space=1)
+end_point = 0.5 + nrow(tab_cov[2:10,]) + nrow(tab_cov[2:10, ]) - 1
+text(seq(1.5, end_point, by = 2), par("usr")[3]-0.25, 
+     srt = 60, adj = 1, xpd = TRUE,
+     labels = tab_cov[order(tab_cov[2:10,1],decreasing=TRUE),][2:10,2], cex = 0.4)
+```
+
+
+
+
+
+
+```{r}
+boxplot(data.frame(sensibilite=tvp, precision=preci), ylim=c(0,1) )
+```
+
+
+```{r}
+boxplot(data.frame(sensibilite=tvp_rf, precision=preci_rf), ylim=c(0,1) )
+```
+
+
+
+
+
+
+
+
+
+```{r}
+vect_sain_elast <- rep(0,27)
+
+for( i in 1:27){
+  for(j in 1:B){
+    if(mat[i,j]!=0){
+      vect_sain_elast[i]<-vect_sain_elast[i]+1
+    }
+  }
+}
+```
+
+```{r}
+vect_sain_elast <- as.data.frame(vect_sain_elast)
+vect_sain_elast$indiv <- c(1:27)
+
+barplot(vect_sain_elast[order(vect_sain_elast[,1],decreasing=TRUE),][,1],names.arg=vect_sain_elast[order(vect_sain_elast[,1],decreasing=TRUE),][,2], las=2, cex.names = 0.8, ylab="nombre de mauvais classement")
+```
+
+
+
+```{r}
+vect_sain_cov <- rep(0,27)
+
+for( i in 1:27){
+  for(j in 1:B){
+    if(mat_rf[i,j]!=0){
+      vect_sain_cov[i]<-vect_sain_cov[i]+1
+    }
+  }
+}
+```
+
+```{r}
+vect_sain_cov <- as.data.frame(vect_sain_cov)
+vect_sain_cov$indiv <- c(1:27)
+
+barplot(vect_sain_cov[order(vect_sain_cov[,1],decreasing=TRUE),][,1],names.arg=vect_sain_cov[order(vect_sain_cov[,1],decreasing=TRUE),][,2], las=2, cex.names = 0.8, ylab="nombre de mauvais classement")
+```
+
+
+
+
+
+```{r}
+vect_patho_elast <- rep(0,nrow(data_davd))
+
+for( l in 28:nrow(data_davd)){
+  for(m in 1:B){
+    if(mat[l,m]!=1){
+      vect_patho_elast[l]<-vect_patho_elast[l]+1
+    }
+  }
+}
+```
+
+```{r}
+vect_patho_elast <- as.data.frame(vect_patho_elast[28:nrow(data_davd)])
+vect_patho_elast$indiv <- c(28:nrow(data_davd))
+
+barplot(vect_patho_elast[order(vect_patho_elast[,1],decreasing=TRUE),][,1],names.arg=vect_patho_elast[order(vect_patho_elast[,1],decreasing=TRUE),][,2], las=2, cex.names = 0.6, ylab="nombre de mauvais classement")
+```
+
+
+
+```{r}
+vect_patho_cov <- rep(0,nrow(data_davd))
+
+for( l in 28:nrow(data_davd)){
+  for(m in 1:B){
+    if(mat_rf[l,m]!=1){
+      vect_patho_cov[l]<-vect_patho_cov[l]+1
+    }
+  }
+}
+```
+
+```{r}
+vect_patho_cov <- as.data.frame(vect_patho_cov[28:nrow(data_davd)])
+vect_patho_cov$indiv <- c(28:nrow(data_davd))
+
+barplot(vect_patho_cov[order(vect_patho_cov[,1],decreasing=TRUE),][,1],names.arg=vect_patho_cov[order(vect_patho_cov[,1],decreasing=TRUE),][,2], las=2, cex.names = 0.6,ylab="nombre de mauvais classement", ylim = c(0,20))
+```
+
+
+## Variables Gram Schmidt 
+
+### résultats combinés 
+
+```{r}
+boxplot(data.frame(elasticnet=err_elast_gram, VSURF=err_covvsurf_gram), ylab="taux d'erreur")
+```
+
+
+```{r}
+boxplot(data.frame(elasticnet=nb_var_elast_gram, VSURF=nb_var_covs_gram), ylab="nombre de variables sélectionnées")
+```
+
+
+
+```{r}
+#comptage des variables utilisées
+vecteur_var_elast_gram <- rep(0,1681)
+
+for (o in 1:(B*n_folds)){
+  for(p in 1:44){
+    if (choix_var_elast_gram[o,p]!=0){
+      vecteur_var_elast_gram[p] <- vecteur_var_elast_gram[p]+1
+    }
+  }
+}
+
+vecteur_var_elast_gram <- as.data.frame(vecteur_var_elast_gram)
+vecteur_var_elast_gram <- cbind(vecteur_var_elast_gram,c('intercept',colnames(data_davd)))
+```
+
+```{r, fig.width=12}
+tab_elast_gram=vecteur_var_elast_gram[order(-vecteur_var_elast_gram$vecteur_var_elast_gram),]
+colnames(tab_elast_gram) <- c('freq', 'vari')
+```
+
+```{r}
+barplot(tab_elast_gram[order(tab_elast_gram[-1,1],decreasing=TRUE),][-1,1], ylab ="nombre de fois que la variable est sélectionnée ", space =1, ylim=c(0,100))
+```
+
+
+```{r}
+#comptage des variables utilisées
+vecteur_var_covs_gram <- rep(0,1681)
+
+for (o in 1:(B*n_folds)){
+  for(p in 1:1680){
+    if (choix_var_covs_gram[o,p]!=0){
+      vecteur_var_covs_gram[p] <- vecteur_var_covs_gram[p]+1
+    }
+  }
+}
+
+vecteur_var_covs_gram <- as.data.frame(vecteur_var_covs_gram)
+vecteur_var_covs_gram <- cbind(vecteur_var_covs_gram,c('intercept',colnames(data_davd)))
+```
+
+```{r, fig.width=12}
+tab_cov_gram=vecteur_var_covs_gram[order(-vecteur_var_covs_gram$vecteur_var_covs_gram),]
+colnames(tab_cov_gram) <- c('freq', 'vari')
+```
+
+```{r}
+barplot(tab_cov_gram[order(tab_cov_gram[-1,1],decreasing=TRUE),][-1,1], ylab ="nombre de fois que la variable est sélectionnée ", space =1, ylim=c(0,100))
+
+```
+
+
+
+
+```{r}
+barplot(tab_elast_gram[order(tab_elast_gram[2:10,1],decreasing=TRUE),][2:10,1], ylab ="nombre de fois que la variable est sélectionnée ", space =1)
+end_point = 0.5 + nrow(tab_elast_gram[2:10,]) + nrow(tab_elast_gram[2:10, ]) - 1
+text(seq(1.5, end_point, by = 2), par("usr")[3]-0.25, 
+     srt = 60, adj = 1, xpd = TRUE,
+     labels = tab_elast_gram[order(tab_elast_gram[2:10,1],decreasing=TRUE),][2:10,2], cex = 0.4)
+```
+
+```{r}
+barplot(tab_cov_gram[order(tab_cov_gram[2:10,1],decreasing=TRUE),][2:10,1], ylab ="nombre de fois que la variable est sélectionnée ", space =1)
+end_point = 0.5 + nrow(tab_cov_gram[2:10,]) + nrow(tab_cov_gram[2:10, ]) - 1
+text(seq(1.5, end_point, by = 2), par("usr")[3]-0.25, 
+     srt = 60, adj = 1, xpd = TRUE,
+     labels = tab_cov_gram[order(tab_cov_gram[2:10,1],decreasing=TRUE),][2:10,2], cex = 0.4)
+```
+
+
+
+
+
+```{r}
+boxplot(data.frame(sensibilite =tvp_elast_gram, precision=preci_elast_gram), ylim=c(0,1) )
+```
+
+```{r}
+boxplot(data.frame(sensibilite =tvp_rf_gram, precision=preci_rf_gram), ylim=c(0,1))
+```
+
+
+
+
+```{r}
+vect_sain_elast_gram <- rep(0,27)
+
+for( i in 1:27){
+  for(j in 1:B){
+    if(mat_elast_gram[i,j]!=0){
+      vect_sain_elast_gram[i]<-vect_sain_elast_gram[i]+1
+    }
+  }
+}
+```
+
+```{r}
+vect_sain_elast_gram <- as.data.frame(vect_sain_elast_gram)
+vect_sain_elast_gram$indiv <- c(1:27)
+
+barplot(vect_sain_elast_gram[order(vect_sain_elast_gram[,1],decreasing=TRUE),][,1],names.arg=vect_sain_elast_gram[order(vect_sain_elast_gram[,1],decreasing=TRUE),][,2], las=2, cex.names = 0.8, ylab="nombre de mauvais classement")
+```
+
+
+```{r}
+vect_sain_cov_gram <- rep(0,27)
+
+for( i in 1:27){
+  for(j in 1:B){
+    if(mat_rf_gram[i,j]!=0){
+      vect_sain_cov_gram[i]<-vect_sain_cov_gram[i]+1
+    }
+  }
+}
+```
+
+```{r}
+vect_sain_cov_gram <- as.data.frame(vect_sain_cov_gram)
+vect_sain_cov_gram$indiv <- c(1:27)
+
+barplot(vect_sain_cov_gram[order(vect_sain_cov_gram[,1],decreasing=TRUE),][,1],names.arg=vect_sain_cov_gram[order(vect_sain_cov_gram[,1],decreasing=TRUE),][,2], las=2, cex.names = 0.8, ylab="nombre de mauvais classement")
+```
+
+
+
+
+
+
+
+```{r}
+vect_patho_elast_gram <- rep(0,nrow(data_davd))
+
+for( l in 28:nrow(data_davd)){
+  for(m in 1:B){
+    if(mat_elast_gram[l,m]!=1){
+      vect_patho_elast_gram[l]<-vect_patho_elast_gram[l]+1
+    }
+  }
+}
+```
+
+```{r}
+vect_patho_elast_gram <- as.data.frame(vect_patho_elast_gram[28:nrow(data_davd)])
+vect_patho_elast_gram$indiv <- c(28:nrow(data_davd))
+
+barplot(vect_patho_elast_gram[order(vect_patho_elast_gram[,1],decreasing=TRUE),][,1],names.arg=vect_patho_elast_gram[order(vect_patho_elast_gram[,1],decreasing=TRUE),][,2], las=2, cex.names = 0.8, ylab="nombre de mauvais classement")
+```
+
+
+```{r}
+vect_patho_cov_gram <- rep(0,nrow(data_davd))
+
+for( l in 28:nrow(data_davd)){
+  for(m in 1:B){
+    if(mat_rf_gram[l,m]!=1){
+      vect_patho_cov_gram[l]<-vect_patho_cov_gram[l]+1
+    }
+  }
+}
+```
+
+```{r}
+vect_patho_cov_gram <- as.data.frame(vect_patho_cov_gram[28:nrow(data_davd)])
+vect_patho_cov_gram$indiv <- c(28:nrow(data_davd))
+
+barplot(vect_patho_cov_gram[order(vect_patho_cov_gram[,1],decreasing=TRUE),][,1],names.arg=vect_patho_cov_gram[order(vect_patho_cov_gram[,1],decreasing=TRUE),][,2], las=2, cex.names = 0.8, ylab="nombre de mauvais classement")
+```
+
+
+
+
+
+## Variables clustering de variables
+
+### choix du nombre de classes 
+
+```{r}
+#kval <- c(2:19, seq(from = 20, to = 100, by = 5), seq(from = 101, to = ncol(data_davd), by = 300))
+kval <- c(2:30)
+nb_f <- 100
+```
+
+```{r}
+mat_foret <- matrix(NA,nb_f,length(kval))
+```
+
+```{r}
+for(i in 1:nb_f){
+  for(j in 1:length(kval)){
+    cut <- cutreevar(tree_donnees_entieres,j)
+    var_synthe <- cut$scores
+    rf <- randomForest(var_synthe,as.factor(y_davd),ntree = 300)
+    err <- rf$err.rate[300,1]
+    mat_foret[i,j] <- err 
+  }
+  print(i)
+}
+```
+
+```{r}
+# 1 for rows 
+moyenne <- apply(mat_foret, 2, mean)
+```
+
+
+```{r}
+save(mat_foret,file="/Volumes/mariette.dupuy/GitHub/IHU-LIRYC/matrice_foret.RData")
+```
+
+```{r}
+load("/Volumes/mariette.dupuy/GitHub/IHU-LIRYC/matrice_foret.RData")
+```
+
+
+```{r}
+lim=c(0.05,0.35)
+matplot(t(mat_foret),type="l",ylim=lim,lty=2, xlab="kval", ylab="erreur OOB",las=2, col='black') 
+matlines(moyenne,type="l",col=2,lwd=3) 
+#axis(1,at=c(1:30), labels=c(1:30)) 
+legend("bottomright", lty=c(1,3),lwd=c(2,2),col=c("black",2),
+legend=c("erreur oob", "erreur oob moyenne"))
+```
+
+```{r}
+plot(moyenne,type = "l",xaxt="n")
+``` 
+
+### résultats combinés
+
+```{r}
+boxplot(data.frame(elasticnet = err_elast_synth, VSURF=err_covvsurf_synth), ylab="taux d'erreur")
+```
+
+```{r}
+boxplot(data.frame(elasticnet = nb_var_elast_synth, VSURF=nb_var_covs_synth), ylab="nombre de variables sélectionnées")
+```
+
+
+
+```{r}
+#comptage des variables utilisées
+vecteur_var_elast_synth <- rep(0,23)
+
+for (o in 1:(B*n_folds)){
+  for(p in 1:23){
+    if (choix_var_elast_synth[o,p]!=0){
+      vecteur_var_elast_synth[p] <- vecteur_var_elast_synth[p]+1
+    }
+  }
+}
+
+vecteur_var_elast_synth <- as.data.frame(vecteur_var_elast_synth)
+vecteur_var_elast_synth <- cbind(vecteur_var_elast_synth,c('intercept',colnames(var_synth)))
+```
+
+```{r, fig.width=12}
+tab_elast_synth=vecteur_var_elast_synth[order(-vecteur_var_elast_synth$vecteur_var_elast_synth),]
+colnames(tab_elast_synth) <- c('freq', 'vari')
+```
+
+```{r}
+barplot(tab_elast_synth[order(tab_elast_synth[2:23,1],decreasing=TRUE),][2:23,1],ylab="nombre de fois que la variable est sélectionnée", space =1)
+end_point = 0.5 + nrow(tab_elast_synth[2:23,]) + nrow(tab_elast_synth[2:23, ]) - 1
+text(seq(1.5, end_point, by = 2), par("usr")[3]-0.25, 
+     srt = 60, adj = 1, xpd = TRUE,
+     labels = tab_elast_synth[order(tab_elast_synth[2:23,1],decreasing=TRUE),][2:23,2], cex = 0.8)
+```
+
+
+```{r}
+#comptage des variables utilisées
+vecteur_var_covs_synth <- rep(0,23)
+
+for (o in 1:(B*n_folds)){
+  for(p in 1:1680){
+    if (choix_var_covs_synth[o,p]!=0){
+      vecteur_var_covs_synth[p] <- vecteur_var_covs_synth[p]+1
+    }
+  }
+}
+
+vecteur_var_covs_synth <- as.data.frame(vecteur_var_covs_synth)
+vecteur_var_covs_synth <- cbind(vecteur_var_covs_synth,c('intercept',colnames(var_synth)))
+```
+
+```{r, fig.width=12}
+tab_cov_synth=vecteur_var_covs_synth[order(-vecteur_var_covs_synth$vecteur_var_covs_synth),]
+colnames(tab_cov_synth) <- c('freq', 'vari')
+```
+
+```{r}
+barplot(tab_cov_synth[order(tab_cov_synth[2:23,1],decreasing=TRUE),][2:23,1], ylab="nombre de fois que la variable est sélectionnée", space =1)
+end_point = 0.5 + nrow(tab_cov_synth[2:23,]) + nrow(tab_cov_synth[2:23, ]) - 1
+text(seq(1.5, end_point, by = 2), par("usr")[3]-0.25, 
+     srt = 60, adj = 1, xpd = TRUE,
+     labels = tab_cov_synth[order(tab_cov_synth[2:23,1],decreasing=TRUE),][2:23,2], cex = 0.8)
+```
+
+
+
+
+```{r}
+boxplot(data.frame(sensibilite=tvp_elast_synth, precision=preci_elast_synth),ylim=c(0,1))
+```
+
+
+```{r}
+boxplot(data.frame(sensibilite=tvp_rf_synth, precision= preci_rf_synth),ylim=c(0,1))
+```
+
+
+
+
+
+
+```{r}
+vect_sain_elast_synth <- rep(0,27)
+
+for( i in 1:27){
+  for(j in 1:B){
+    if(mat_elast_synth[i,j]!=0){
+      vect_sain_elast_synth[i]<-vect_sain_elast_synth[i]+1
+    }
+  }
+}
+```
+
+```{r}
+vect_sain_elast_synth <- as.data.frame(vect_sain_elast_synth)
+vect_sain_elast_synth$indiv <- c(1:27)
+
+barplot(vect_sain_elast_synth[order(vect_sain_elast_synth[,1],decreasing=TRUE),][,1],names.arg=vect_sain_elast_synth[order(vect_sain_elast_synth[,1],decreasing=TRUE),][,2], las=2, cex.names = 0.8, ylab="nombre de mauvais classement")
+```
+
+
+```{r}
+vect_sain_cov_synth <- rep(0,27)
+
+for( i in 1:27){
+  for(j in 1:B){
+    if(mat_rf_synth[i,j]!=0){
+      vect_sain_cov_synth[i]<-vect_sain_cov_synth[i]+1
+    }
+  }
+}
+```
+
+```{r}
+vect_sain_cov_synth <- as.data.frame(vect_sain_cov_synth)
+vect_sain_cov_synth$indiv <- c(1:27)
+
+barplot(vect_sain_cov_synth[order(vect_sain_cov_synth[,1],decreasing=TRUE),][,1],names.arg=vect_sain_cov_synth[order(vect_sain_cov_synth[,1],decreasing=TRUE),][,2], las=2, cex.names = 0.8, ylab="nombre de mauvais classement")
+```
+
+
+
+
+
+
+
+```{r}
+vect_patho_elast_synth <- rep(0,nrow(data_davd))
+
+for( l in 28:nrow(data_davd)){
+  for(m in 1:B){
+    if(mat_elast_synth[l,m]!=1){
+      vect_patho_elast_synth[l]<-vect_patho_elast_synth[l]+1
+    }
+  }
+}
+```
+
+```{r}
+vect_patho_elast_synth <- as.data.frame(vect_patho_elast_synth[28:nrow(data_davd)])
+vect_patho_elast_synth$indiv <- c(28:nrow(data_davd))
+
+barplot(vect_patho_elast_synth[order(vect_patho_elast_synth[,1],decreasing=TRUE),][,1],names.arg=vect_patho_elast_synth[order(vect_patho_elast_synth[,1],decreasing=TRUE),][,2], las=2, cex.names = 0.8, ylab="nombre de mauvais classement")
+```
+
+
+```{r}
+vect_patho_cov_synth <- rep(0,nrow(data_davd))
+
+for( l in 28:nrow(data_davd)){
+  for(m in 1:B){
+    if(mat_rf_synth[l,m]!=1){
+      vect_patho_cov_synth[l]<-vect_patho_cov_synth[l]+1
+    }
+  }
+}
+```
+
+```{r}
+vect_patho_cov_synth <- as.data.frame(vect_patho_cov_synth[28:nrow(data_davd)])
+vect_patho_cov_synth$indiv <- c(28:nrow(data_davd))
+
+barplot(vect_patho_cov_synth[order(vect_patho_cov_synth[,1],decreasing=TRUE),][,1],names.arg=vect_patho_cov_synth[order(vect_patho_cov_synth[,1],decreasing=TRUE),][,2], las=2, cex.names = 0.8, ylab="nombre de mauvais classement")
+```
+
+
+## Comparaison des méthodes 
+
+```{r}
+boxplot(data.frame(elasticnet=err_elast, VSURF=err_covvsurf, elast_gram=err_elast_gram, VSURF_gram=err_covvsurf_gram, elast_synth=err_elast_synth, VSURF_synth=err_covvsurf_synth), ylab="Taux d'erreur",las=2,cex.axis=0.7)
+```
+
+
+```{r}
+boxplot(data.frame(elasticnet=nb_var_elast, VSURF=nb_var_covs, elast_gram=nb_var_elast_gram, VSURF_gram=nb_var_covs_gram, elast_synth=nb_var_elast_synth, VSURF_synth=nb_var_covs_synth), ylab="Nombre de variables sélectionnées",las=2,cex.axis=0.7)
+```
+
+
+```{r}
+boxplot(data.frame(elasticnet=tvp, VSURF=tvp_rf, elast_gram=tvp_elast_gram, VSURF_gram=tvp_rf_gram, elast_synth=tvp_elast_synth, VSURF_synth=tvp_rf_synth),las=2,cex.axis=0.7, ylab="sensibilité")
+```
+
+
+
+
+```{r}
+boxplot(data.frame(elasticnet=preci, VSURF=preci_rf, elast_gram=preci_elast_gram, VSURF_gram=preci_rf_gram, elast_synth=preci_elast_synth, VSURF_synth=preci_rf_synth), ylab="precision",las=2,cex.axis=0.7)
+```
+
+
+
+
+# Annexes 
+
+## ACP clustering de variables 
+
+```{r}
+P10 <- cutreevar(tree_donnees_entieres,200)
+summary(P10)
+```
+
+```{r}
+P10$size
+```
+
+```{r}
+matrice_synth_10clusters <- P10$scores
+```
+
+```{r}
+cor(matrice_synth_10clusters)
+```
+
+
+```{r}
+data_synth <- data.frame(y_davd,matrice_synth_10clusters)
+```
+
+```{r}
+#acp normée 
+acp_synth <- PCA(data_synth, scale.unit=TRUE, quali.sup =1, graph=F)
+```
+
+
+```{r}
+#cercle des corrélations axes 1 et 2
+#select.var = list(cos2=0.5),
+fviz_pca_var(acp_synth,axes = c(1,2), col.var="contrib",  label="none") + labs(title="Cercle des corrélations sur les données synthétiques")+theme(plot.title =element_text(hjust = 0.5),plot.caption =element_text(hjust = 0.5))
+```
+
+
+```{r}
+#plan factoriel axes 1 et 2
+fviz_pca_ind(acp_synth,axes = c(1,2), habillage = 1, mean.point = FALSE)+ labs(title="Graphique des individus sur les données synthétiques")+theme(plot.title =element_text(hjust = 0.5),plot.caption =element_text(hjust = 0.5))
+```
+
+
+## ACP variables GS 
+
+
+
+## ACP variables Nolwenn 
+
+
+
+
+
+
+
+
+
+
