@@ -1,5 +1,5 @@
 ---
-title: "codeV2"
+title: "code automatique"
 output: html_document
 editor_options: 
   chunk_output_type: console
@@ -10,7 +10,7 @@ knitr::opts_chunk$set(out.width="400px", dpi=120)
 ```
 
 
-nouveau code après récupération des résulats (apres avoir enlevé les individus 34 et 47)
+
 ```{r setup, include=FALSE}
 devtools::install_github("chavent/PCAmixdata")
 devtools::install_github("robingenuer/CoVVSURF")
@@ -41,31 +41,47 @@ library(dendextend)
 library(tidyverse)
 ```
 
+Ce code permet de tester deux méthodes de réduction du nombre de variables descriptives et deux méthodes de classification afin de trouver la meilleure combinaison des deux méthodes pour discriminer des patients sains des patients pathologiques.  
+
+
 # Base de données 
 
-Dans cette base, les 27 premières lignes sont des patients contrôles et les 20 patients suivants sont pathologiques. 
+Pour que ce code fonctionne il faut que les premières lignes de la base de données soit des patients controles et les lignes suivantes des patients pathologiques.  
 
 ```{r}
-data_davd <- read.csv("/Volumes/mariette.dupuy/GitHub/IHU-LIRYC/DAVD_nom_new.csv" , sep=";",header = TRUE)
+#importation de la base de données
+data_davd <- read.csv("U:/th-se/DAVD_nom_new.csv" , sep=";",header = TRUE)
 #data_davd <- read.csv("DAVD_nom.csv" , sep=";",header = TRUE)
 ```
 
-```{r}
-data_davd <- data_davd[-c(34,47),]
-rownames(data_davd) <- NULL
-```
-
 
 ```{r}
-Name_desc <- read_excel("/Volumes/mariette.dupuy/GitHub/IHU-LIRYC/Name_desc.xlsx")
+#récupération des noms de variables créés par Nolwenn TAN : 1680 variables descriptives
+Name_desc <- read_excel("U:/th-se/Name_desc.xlsx")
 #Name_desc <- read_excel("Name_desc.xlsx")
 ```
+
+Pour mettre en place l'ACP par la suite il faut enlever les valeurs manquantes (NA). Le code permet de visualiser quels individus ont des NA (dans la liste indNA) puis les enlève. vERIFIER AVANT SI NA SINON LE CODE SUIVANT VA VIDER LA BASE DE DONNEES. 
+
+```{r}
+#indNA <- which(is.na(data_davd),arr.ind=TRUE)[,1]
+#data_davd <- data_davd[-indNA,]
+```
+
+Cette partie du code permet de construire la variable réponse, il faut alors connaitre le nombre de patients sains construire le vecteur correctement. 
+
+```{r}
+nb_total = nrow(data_davd)
+nb_sains = 27
+nb_pathos = nb_total-nb_sains
+```
+
 
 ```{r}
 y_davd <- rep(NA, nrow(data_davd))
 
 for (i in 1:nrow(data_davd)){
-    if (i < 28) {
+    if (i <= nb_sains) {
         y_davd[i] <- 0
     }
     else {
@@ -74,15 +90,17 @@ for (i in 1:nrow(data_davd)){
 }
 ```
 
+Ajout des noms de variables comme noms de colonnes dans la base de données. 
+
 ```{r}
-for(i in 1:1680){
+for(i in 1:ncol(data_davd)){
   colnames(data_davd)[i] <- paste(Name_desc[1,i],Name_desc[2,i],Name_desc[3,i],Name_desc[4,i],sep = "_")
 }
 ```
 
 ```{r}
-side <- as.data.frame(setNames(replicate(1680,numeric(0), simplify = F),colnames(data_davd) ))
-side [1,] <- Name_desc[5,]
+#side <- as.data.frame(setNames(replicate(1680,numeric(0), simplify = F),colnames(data_davd) ))
+#side [1,] <- Name_desc[5,]
 ```
 
 
